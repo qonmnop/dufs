@@ -121,9 +121,31 @@
       <div class="not-editable hidden"></div>
       <textarea id="editor" class="editor hidden" aria-label="Editor" cols="10"></textarea>
     </div>
+    <div id="readme-content"></div>
   </div>
   <template id="index-data">__INDEX_DATA__</template>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="__ASSETS_PREFIX__index.js"></script>
+  <script>
+    let href = window.location.href;
+    if(href.substring(href.length - 1) !== '/'){
+      href = href + '/';
+    }
+    let readmeFileUrl = href + 'README.md';
+    fetch(readmeFileUrl, {
+      method: 'HEAD',
+    }).then(rs => {
+      if(rs.status === 200){
+        fetch(readmeFileUrl, {
+          method: 'GET',
+        }).then(response => {
+          response.text().then(text => {
+            document.getElementById('readme-content').innerHTML = marked.parse(text);
+          });
+        });
+      }
+    });
+  </script>
 </body>
 
 </html>
