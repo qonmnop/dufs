@@ -1,17 +1,17 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 #[cfg(feature = "tls")]
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
 use std::{
     borrow::Cow,
     path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-pub fn unix_now() -> Result<Duration> {
+pub fn unix_now() -> Duration {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .with_context(|| "Invalid system time")
+        .expect("Unable to get unix epoch time")
 }
 
 pub fn encode_uri(v: &str) -> String {
@@ -19,7 +19,7 @@ pub fn encode_uri(v: &str) -> String {
     parts.join("/")
 }
 
-pub fn decode_uri(v: &str) -> Option<Cow<str>> {
+pub fn decode_uri(v: &str) -> Option<Cow<'_, str>> {
     percent_encoding::percent_decode(v.as_bytes())
         .decode_utf8()
         .ok()
@@ -62,42 +62,40 @@ pub fn glob(pattern: &str, target: &str) -> bool {
 
 // Load public certificate from file.
 #[cfg(feature = "tls")]
-pub fn load_certs<T: AsRef<Path>>(filename: T) -> Result<Vec<CertificateDer<'static>>> {
-    // Open certificate file.
-    let cert_file = std::fs::File::open(filename.as_ref())
-        .with_context(|| format!("Failed to access `{}`", filename.as_ref().display()))?;
-    let mut reader = std::io::BufReader::new(cert_file);
-
-    // Load and return certificate.
+pub fn load_certs<T: AsRef<Path>>(file_name: T) -> Result<Vec<CertificateDer<'static>>> {
     let mut certs = vec![];
-    for cert in rustls_pemfile::certs(&mut reader) {
-        let cert = cert.with_context(|| "Failed to load certificate")?;
+    for cert in CertificateDer::pem_file_iter(file_name.as_ref()).with_context(|| {
+        format!(
+            "Failed to load cert file at `{}`",
+            file_name.as_ref().display()
+        )
+    })? {
+        let cert = cert.with_context(|| {
+            format!(
+                "Invalid certificate data in file `{}`",
+                file_name.as_ref().display()
+            )
+        })?;
         certs.push(cert)
     }
     if certs.is_empty() {
-        anyhow::bail!("No supported certificate in file");
+        anyhow::bail!(
+            "No supported certificate in file `{}`",
+            file_name.as_ref().display()
+        );
     }
     Ok(certs)
 }
 
 // Load private key from file.
 #[cfg(feature = "tls")]
-pub fn load_private_key<T: AsRef<Path>>(filename: T) -> Result<PrivateKeyDer<'static>> {
-    let key_file = std::fs::File::open(filename.as_ref())
-        .with_context(|| format!("Failed to access `{}`", filename.as_ref().display()))?;
-    let mut reader = std::io::BufReader::new(key_file);
-
-    // Load and return a single private key.
-    for key in rustls_pemfile::read_all(&mut reader) {
-        let key = key.with_context(|| "There was a problem with reading private key")?;
-        match key {
-            rustls_pemfile::Item::Pkcs1Key(key) => return Ok(PrivateKeyDer::Pkcs1(key)),
-            rustls_pemfile::Item::Pkcs8Key(key) => return Ok(PrivateKeyDer::Pkcs8(key)),
-            rustls_pemfile::Item::Sec1Key(key) => return Ok(PrivateKeyDer::Sec1(key)),
-            _ => {}
-        }
-    }
-    anyhow::bail!("No supported private key in file");
+pub fn load_private_key<T: AsRef<Path>>(file_name: T) -> Result<PrivateKeyDer<'static>> {
+    PrivateKeyDer::from_pem_file(file_name.as_ref()).with_context(|| {
+        format!(
+            "Failed to load key file at `{}`",
+            file_name.as_ref().display()
+        )
+    })
 }
 
 pub fn parse_range(range: &str, size: u64) -> Option<Vec<(u64, u64)>> {
@@ -123,7 +121,7 @@ pub fn parse_range(range: &str, size: u64) -> Option<Vec<(u64, u64)>> {
                     result.push((start, size - 1));
                 } else {
                     let end = end.parse::<u64>().ok()?;
-                    if end < size {
+                    if end < size && start <= end {
                         result.push((start, end));
                     } else {
                         return None;

@@ -83,6 +83,19 @@ fn get_dir_simple(#[with(&["-A"])] server: TestServer) -> Result<(), Error> {
 }
 
 #[rstest]
+fn get_dir_noscript(#[with(&["-A"])] server: TestServer) -> Result<(), Error> {
+    let resp = reqwest::blocking::get(format!("{}?noscript", server.url()))?;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "text/html; charset=utf-8"
+    );
+    let text = resp.text().unwrap();
+    assert!(text.contains(r#"<td><a href="index.html">index.html</a></td>"#));
+    Ok(())
+}
+
+#[rstest]
 fn head_dir_zip(#[with(&["-A"])] server: TestServer) -> Result<(), Error> {
     let resp = fetch!(b"HEAD", format!("{}?zip", server.url())).send()?;
     assert_eq!(resp.status(), 200);
@@ -173,6 +186,22 @@ fn get_file(server: TestServer) -> Result<(), Error> {
 }
 
 #[rstest]
+fn get_file_json(server: TestServer) -> Result<(), Error> {
+    let resp = reqwest::blocking::get(format!("{}index.html?json", server.url()))?;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "application/json"
+    );
+    let json: Value = serde_json::from_str(&resp.text()?).unwrap();
+    assert_eq!(json["name"], "index.html");
+    assert_eq!(json["path_type"], "File");
+    assert!(json["size"].as_u64().is_some());
+    assert!(json["mtime"].as_u64().is_some());
+    Ok(())
+}
+
+#[rstest]
 fn head_file(server: TestServer) -> Result<(), Error> {
     let resp = fetch!(b"HEAD", format!("{}index.html", server.url())).send()?;
     assert_eq!(resp.status(), 200);
@@ -190,7 +219,7 @@ fn head_file(server: TestServer) -> Result<(), Error> {
 }
 
 #[rstest]
-fn hash_file(server: TestServer) -> Result<(), Error> {
+fn hash_file(#[with(&["--allow-hash"])] server: TestServer) -> Result<(), Error> {
     let resp = reqwest::blocking::get(format!("{}index.html?hash", server.url()))?;
     assert_eq!(
         resp.headers().get("content-type").unwrap(),
@@ -201,6 +230,13 @@ fn hash_file(server: TestServer) -> Result<(), Error> {
         resp.text()?,
         "c8dd395e3202674b9512f7b7f956e0d96a8ba8f572e785b0d5413ab83766dbc4"
     );
+    Ok(())
+}
+
+#[rstest]
+fn no_hash_file(server: TestServer) -> Result<(), Error> {
+    let resp = reqwest::blocking::get(format!("{}index.html?hash", server.url()))?;
+    assert_eq!(resp.status(), 403);
     Ok(())
 }
 

@@ -149,6 +149,14 @@ pub fn build_cli() -> Command {
                 .help("Allow download folders as archive file"),
         )
         .arg(
+            Arg::new("allow-hash")
+                .env("DUFS_ALLOW_HASH")
+                .hide_env(true)
+                .long("allow-hash")
+                .action(ArgAction::SetTrue)
+                .help("Allow ?hash query to get file sha256 hash"),
+        )
+        .arg(
             Arg::new("enable-cors")
                 .env("DUFS_ENABLE_CORS")
 				.hide_env(true)
@@ -281,11 +289,13 @@ pub struct Args {
     pub allow_search: bool,
     pub allow_symlink: bool,
     pub allow_archive: bool,
+    pub allow_hash: bool,
     pub render_index: bool,
     pub render_spa: bool,
     pub render_try_index: bool,
     pub enable_cors: bool,
     pub assets: Option<PathBuf>,
+    pub error_page: Option<PathBuf>,
     #[serde(deserialize_with = "deserialize_log_http")]
     #[serde(rename = "log-format")]
     pub http_logger: HttpLogger,
@@ -375,6 +385,9 @@ impl Args {
         if !args.allow_symlink {
             args.allow_symlink = allow_all || matches.get_flag("allow-symlink");
         }
+        if !args.allow_hash {
+            args.allow_hash = allow_all || matches.get_flag("allow-hash");
+        }
         if !args.allow_archive {
             args.allow_archive = allow_all || matches.get_flag("allow-archive");
         }
@@ -396,6 +409,13 @@ impl Args {
 
         if let Some(assets_path) = &args.assets {
             args.assets = Some(Args::sanitize_assets_path(assets_path)?);
+        }
+
+        if let Some(assets_path) = &args.assets {
+            let p = assets_path.join("404.html");
+            if p.exists() {
+                args.error_page = Some(p);
+            }
         }
 
         if let Some(log_format) = matches.get_one::<String>("log-format") {
@@ -492,19 +512,14 @@ impl BindAddr {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Compress {
     None,
+    #[default]
     Low,
     Medium,
     High,
-}
-
-impl Default for Compress {
-    fn default() -> Self {
-        Self::Low
-    }
 }
 
 impl ValueEnum for Compress {

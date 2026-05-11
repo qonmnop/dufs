@@ -67,6 +67,7 @@ Options:
       --allow-search         Allow search files/folders
       --allow-symlink        Allow symlink to files/folders outside root directory
       --allow-archive        Allow download folders as archive file
+      --allow-hash           Allow ?hash query to get file sha256 hash
       --enable-cors          Enable CORS, sets `Access-Control-Allow-Origin: *`
       --render-index         Serve index.html when requesting a directory, returns 404 if not found index.html
       --render-try-index     Serve index.html when requesting a directory, returns directory listing if not found index.html
@@ -302,9 +303,16 @@ The log format can use following variables.
 | $http_       | arbitrary request header field. examples: $http_user_agent, $http_referer |
 
 
-The default log format is `'$remote_addr "$request" $status'`.
+The default log format is `'$time_iso8601 $log_level - $remote_addr "$request" $status`.
 ```
 2022-08-06T06:59:31+08:00 INFO - 127.0.0.1 "GET /" 200
+```
+
+A json log format is also supported.
+```
+dufs --log-format '{"time":"$time_local","addr":"$remote_addr","uri":"$request_uri", "method":"$request_method","status":$status}'
+
+{"time":"2022-08-06T06:59:31+08:00","addr":"127.0.0.1","uri":"/", "method":"GET","status":200}
 ```
 
 Disable http log
@@ -346,6 +354,7 @@ All options can be set using environment variables prefixed with `DUFS_`.
     --allow-search          DUFS_ALLOW_SEARCH=true
     --allow-symlink         DUFS_ALLOW_SYMLINK=true
     --allow-archive         DUFS_ALLOW_ARCHIVE=true
+    --allow-hash            DUFS_ALLOW_HASH=true
     --enable-cors           DUFS_ENABLE_CORS=true
     --render-index          DUFS_RENDER_INDEX=true
     --render-try-index      DUFS_RENDER_TRY_INDEX=true
@@ -383,6 +392,7 @@ allow-delete: true
 allow-search: true
 allow-symlink: true
 allow-archive: true
+allow-hash: true
 enable-cors: true
 render-index: true
 render-try-index: true
@@ -411,6 +421,8 @@ Your assets folder must contains a `index.html` file.
 
 - `__INDEX_DATA__`: directory listing data
 - `__ASSETS_PREFIX__`: assets url prefix
+
+> A customized 404.html page is also supported.
 
 </details>
 

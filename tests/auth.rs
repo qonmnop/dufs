@@ -126,10 +126,28 @@ fn auth_skip_if_no_auth_user(server: TestServer) -> Result<(), Error> {
 }
 
 #[rstest]
+fn auth_no_skip_if_anonymous(
+    #[with(&["--auth", "@/:ro"])] server: TestServer,
+) -> Result<(), Error> {
+    let url = format!("{}index.html", server.url());
+    let resp = fetch!(b"GET", &url)
+        .basic_auth("user", Some("pass"))
+        .send()?;
+    assert_eq!(resp.status(), 401);
+    let resp = fetch!(b"GET", &url).send()?;
+    assert_eq!(resp.status(), 200);
+    let resp = fetch!(b"DELETE", &url)
+        .basic_auth("user", Some("pass"))
+        .send()?;
+    assert_eq!(resp.status(), 401);
+    Ok(())
+}
+
+#[rstest]
 fn auth_check(
     #[with(&["--auth", "user:pass@/:rw", "--auth", "user2:pass2@/", "-A"])] server: TestServer,
 ) -> Result<(), Error> {
-    let url = format!("{}index.html", server.url());
+    let url = format!("{}", server.url());
     let resp = fetch!(b"CHECKAUTH", &url).send()?;
     assert_eq!(resp.status(), 401);
     let resp = send_with_digest_auth(fetch!(b"CHECKAUTH", &url), "user", "pass")?;
@@ -143,13 +161,25 @@ fn auth_check(
 fn auth_check2(
     #[with(&["--auth", "user:pass@/:rw|user2:pass2@/", "-A"])] server: TestServer,
 ) -> Result<(), Error> {
-    let url = format!("{}index.html", server.url());
+    let url = format!("{}", server.url());
     let resp = fetch!(b"CHECKAUTH", &url).send()?;
     assert_eq!(resp.status(), 401);
     let resp = send_with_digest_auth(fetch!(b"CHECKAUTH", &url), "user", "pass")?;
     assert_eq!(resp.status(), 200);
     let resp = send_with_digest_auth(fetch!(b"CHECKAUTH", &url), "user2", "pass2")?;
     assert_eq!(resp.status(), 200);
+    Ok(())
+}
+
+#[rstest]
+fn auth_check3(
+    #[with(&["--auth", "user:pass@/:rw", "--auth", "@/dir1:rw", "-A"])] server: TestServer,
+) -> Result<(), Error> {
+    let url = format!("{}dir1/", server.url());
+    let resp = fetch!(b"CHECKAUTH", &url).send()?;
+    assert_eq!(resp.status(), 200);
+    let resp = fetch!(b"CHECKAUTH", format!("{url}?login")).send()?;
+    assert_eq!(resp.status(), 401);
     Ok(())
 }
 
@@ -336,7 +366,18 @@ fn auth_data(
 }
 
 #[rstest]
-fn auth_shadow(
+fn auth_precedence(
+    #[with(&["--auth", "user:pass@/dir1:rw,/dir1/test.txt", "-A"])] server: TestServer,
+) -> Result<(), Error> {
+    let url = format!("{}dir1/test.txt", server.url());
+    let resp = send_with_digest_auth(fetch!(b"PUT", &url).body(b"abc".to_vec()), "user", "pass")?;
+    assert_eq!(resp.status(), 403);
+
+    Ok(())
+}
+
+#[rstest]
+fn auth_anonymous_no_precedence(
     #[with(&["--auth", "user:pass@/:rw", "-a", "@/dir1", "-A"])] server: TestServer,
 ) -> Result<(), Error> {
     let url = format!("{}dir1/test.txt", server.url());
@@ -346,5 +387,21 @@ fn auth_shadow(
     let resp = send_with_digest_auth(fetch!(b"PUT", &url).body(b"abc".to_vec()), "user", "pass")?;
     assert_eq!(resp.status(), 201);
 
+    Ok(())
+}
+
+#[rstest]
+fn token_auth(#[with(&["-a", "user:pass@/"])] server: TestServer) -> Result<(), Error> {
+    let url = format!("{}index.html", server.url());
+    let resp = fetch!(b"GET", &url).send()?;
+    assert_eq!(resp.status(), 401);
+    let url = format!("{}index.html?tokengen", server.url());
+    let resp = fetch!(b"GET", &url)
+        .basic_auth("user", Some("pass"))
+        .send()?;
+    let token = resp.text()?;
+    let url = format!("{}index.html?token={token}", server.url());
+    let resp = fetch!(b"GET", &url).send()?;
+    assert_eq!(resp.status(), 200);
     Ok(())
 }

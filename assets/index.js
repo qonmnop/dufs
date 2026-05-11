@@ -50,6 +50,8 @@ const IFRAME_FORMATS = [
   ".mp3", ".ogg", ".wav", ".m4a",
 ];
 
+const MAX_SUBPATHS_COUNT = 1000;
+
 const ICONS = {
   dir: `<svg height="16" viewBox="0 0 14 16" width="14"><path fill-rule="evenodd" d="M13 4H7V3c0-.66-.31-1-1-1H1c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1V5c0-.55-.45-1-1-1zM6 4H1V3h5v1z"></path></svg>`,
   symlinkFile: `<svg height="16" viewBox="0 0 12 16" width="12"><path fill-rule="evenodd" d="M8.5 1H1c-.55 0-1 .45-1 1v12c0 .55.45 1 1 1h10c.55 0 1-.45 1-1V4.5L8.5 1zM11 14H1V2h7l3 3v9zM6 4.5l4 3-4 3v-2c-.98-.02-1.84.22-2.55.7-.71.48-1.19 1.25-1.45 2.3.02-1.64.39-2.88 1.13-3.73.73-.84 1.69-1.27 2.88-1.27v-2H6z"></path></svg>`,
@@ -104,6 +106,15 @@ let $logoutBtn;
  */
 let $userName;
 
+// manage unload event to prevent leaving with uploads in progress
+const beforeUnloadHandler = (event) => {
+  if (Uploader.queues.length > 0 || Uploader.runnings > 0) {
+    event.preventDefault();
+    event.returnValue = '';
+    return ''; // for some browsers
+  }
+};
+
 // Produce table when window loads
 window.addEventListener("DOMContentLoaded", async () => {
   const $indexData = document.getElementById('index-data');
@@ -128,6 +139,8 @@ async function ready() {
   $loginBtn = document.querySelector(".login-btn");
   $logoutBtn = document.querySelector(".logout-btn");
   $userName = document.querySelector(".user-name");
+
+  window.addEventListener('beforeunload', beforeUnloadHandler);
 
   addBreadcrumb(DATA.href, DATA.uri_prefix);
 
@@ -247,12 +260,14 @@ class Uploader {
 
   progress(event) {
     const now = Date.now();
-    const speed = (event.loaded - this.uploaded) / (now - this.lastUptime) * 1000;
-    const [speedValue, speedUnit] = formatSize(speed);
+    const elapsed = now - this.lastUptime;
+    if (elapsed < 300) return; // throttle update for safari
+    const speed = (event.loaded - this.uploaded) / elapsed * 1000;
+    const [speedValue, speedUnit] = formatFileSize(speed);
     const speedText = `${speedValue} ${speedUnit}/s`;
     const progress = formatPercent(((event.loaded + this.uploadOffset) / this.file.size) * 100);
     const duration = formatDuration((event.total - event.loaded) / speed);
-    this.$uploadStatus.innerHTML = `<span style="width: 80px;">${speedText}</span><span>${progress} ${duration}</span>`;
+    this.$uploadStatus.innerHTML = `<span style="width: 80px;">${speedText}</span><span style="margin-left: 5px;">${progress} ${duration}</span>`;
     this.uploaded = event.loaded;
     this.lastUptime = now;
   }
@@ -345,6 +360,7 @@ async function setupIndexPage() {
     const $download = document.querySelector(".download");
     $download.href = baseUrl() + "?zip";
     $download.title = "Download folder as a .zip file";
+    $download.classList.add("dlwt");
     $download.classList.remove("hidden");
   }
 
@@ -365,6 +381,10 @@ async function setupIndexPage() {
 
   renderPathsTableHead();
   renderPathsTableBody();
+
+  if (DATA.user) {
+    setupDownloadWithToken();
+  }
 }
 
 /**
@@ -447,18 +467,18 @@ function addPath(file, index) {
     if (DATA.allow_archive) {
       actionDownload = `
       <div class="action-btn">
-        <a href="${url}?zip" title="Download folder as a .zip file">${ICONS.download}</a>
+        <a class="dlwt" href="${url}?zip" title="Download folder as a .zip file" download>${ICONS.download}</a>
       </div>`;
     }
   } else {
     actionDownload = `
     <div class="action-btn" >
-      <a href="${url}" title="Download file" download>${ICONS.download}</a>
+      <a class="dlwt" href="${url}" title="Download file" download>${ICONS.download}</a>
     </div>`;
   }
   if (DATA.allow_delete) {
     if (DATA.allow_upload) {
-      actionMove = `<div onclick="movePath(${index})" class="action-btn" id="moveBtn${index}" title="Move to new path">${ICONS.move}</div>`;
+      actionMove = `<div onclick="movePath(${index})" class="action-btn" id="moveBtn${index}" title="Move & Rename">${ICONS.move}</div>`;
       if (!isDir) {
         actionEdit = `<a class="action-btn" title="Edit file" target="_blank" href="${url}?edit">${ICONS.edit}</a>`;
       }
@@ -477,8 +497,8 @@ function addPath(file, index) {
     ${actionDelete}
     ${actionEdit}
   </td>`;
-  
-  let sizeDisplay = isDir ? `${file.size} ${file.size === 1 ? "item" : "items"}` : formatSize(file.size).join(" ");
+
+  let sizeDisplay = isDir ? formatDirSize(file.size) : formatFileSize(file.size).join(" ");
 
   $pathsTableBody.insertAdjacentHTML("beforeend", `
 <tr id="addPath${index}">
@@ -527,11 +547,38 @@ async function setupAuth() {
     $loginBtn.classList.remove("hidden");
     $loginBtn.addEventListener("click", async () => {
       try {
-        await checkAuth();
-      } catch {}
+        await checkAuth("login");
+      } catch { }
       location.reload();
     });
   }
+}
+
+function setupDownloadWithToken() {
+  document.querySelectorAll("a.dlwt").forEach(link => {
+    link.addEventListener("click", async e => {
+      e.preventDefault();
+      try {
+        const link = e.currentTarget || e.target;
+        const originalHref = link.getAttribute("href");
+        const tokengenUrl = new URL(originalHref);
+        tokengenUrl.searchParams.set("tokengen", "");
+        const res = await fetch(tokengenUrl);
+        if (!res.ok) throw new Error("Failed to fetch token");
+        const token = await res.text();
+        const downloadUrl = new URL(originalHref);
+        downloadUrl.searchParams.set("token", token);
+        const tempA = document.createElement("a");
+        tempA.href = downloadUrl.toString();
+        tempA.download = "";
+        document.body.appendChild(tempA);
+        tempA.click();
+        document.body.removeChild(tempA);
+      } catch (err) {
+        alert(`Failed to download, ${err.message}`);
+      }
+    });
+  });
 }
 
 function setupSearch() {
@@ -644,7 +691,7 @@ async function setupEditorPage() {
       $editor.value = decoder.decode(dataView);
     }
   } catch (err) {
-    alert(`Failed get file, ${err.message}`);
+    alert(`Failed to get file, ${err.message}`);
   }
 }
 
@@ -748,9 +795,10 @@ async function saveChange() {
   }
 }
 
-async function checkAuth() {
+async function checkAuth(variant) {
   if (!DATA.auth) return;
-  const res = await fetch(baseUrl(), {
+  const qs = variant ? `?${variant}` : "";
+  const res = await fetch(baseUrl() + qs, {
     method: "CHECKAUTH",
   });
   await assertResOK(res);
@@ -878,16 +926,25 @@ function padZero(value, size) {
   return ("0".repeat(size) + value).slice(-1 * size);
 }
 
-function formatSize(size) {
+function formatDirSize(size) {
+  const unit = size === 1 ? "item" : "items";
+  const num = size >= MAX_SUBPATHS_COUNT ? `>${MAX_SUBPATHS_COUNT - 1}` : `${size}`;
+  return ` ${num} ${unit}`;
+}
+
+function formatFileSize(size) {
   if (size == null) return [0, "B"];
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   if (size == 0) return [0, "B"];
   const i = parseInt(Math.floor(Math.log(size) / Math.log(1024)));
-  let ratio = 1;
-  if (i >= 3) {
-    ratio = 100;
+  const raw = size / Math.pow(1024, i);
+  let value;
+  if (i > 0 && raw < 999.95) {
+    value = Math.round(raw * 10) / 10;
+  } else {
+    value = Math.round(raw);
   }
-  return [Math.round(size * ratio / Math.pow(1024, i), 2) / ratio, sizes[i]];
+  return [value, sizes[i]];
 }
 
 function formatDuration(seconds) {
@@ -938,9 +995,9 @@ function decodeBase64(base64String) {
   let i = 0;
   for (; i < arr.length; i++) {
     arr[i] = binString.charCodeAt(i * 4) |
-             (binString.charCodeAt(i * 4 + 1) << 8) |
-             (binString.charCodeAt(i * 4 + 2) << 16) |
-             (binString.charCodeAt(i * 4 + 3) << 24);
+      (binString.charCodeAt(i * 4 + 1) << 8) |
+      (binString.charCodeAt(i * 4 + 2) << 16) |
+      (binString.charCodeAt(i * 4 + 3) << 24);
   }
   for (i = i * 4; i < len; i++) {
     bytes[i] = binString.charCodeAt(i);
